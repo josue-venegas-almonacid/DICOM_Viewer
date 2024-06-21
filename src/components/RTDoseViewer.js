@@ -20,18 +20,66 @@ const RTDoseViewer = () => {
   }, []);
 
   useEffect(() => {
+    const loadAndDisplayImage = async (imageId) => {
+      try {
+        const image = await cornerstone.loadImage(imageId);
+        applyColorMap(image);
+        cornerstone.displayImage(elementRef.current, image);
+      } catch (error) {
+        console.error('Error loading DICOM image:', error);
+      }
+    };
+
     if (imageIds.length > 0) {
       loadAndDisplayImage(imageIds[currentIndex]);
     }
   }, [currentIndex, imageIds]);
 
-  const loadAndDisplayImage = async (imageId) => {
-    try {
-      const image = await cornerstone.loadImage(imageId);
-      cornerstone.displayImage(elementRef.current, image);
-    } catch (error) {
-      console.error('Error loading DICOM image:', error);
+  const applyColorMap = (image) => {
+    const colorMap = (pixelValue) => {
+      const colors = [
+        { threshold: 0, color: [0, 0, 0] },       // Black for background
+        { threshold: 0.1, color: [255, 0, 255] }, // Magenta
+        { threshold: 0.3, color: [0, 0, 255] },   // Blue
+        { threshold: 0.5, color: [0, 255, 255] }, // Cyan
+        { threshold: 0.6, color: [0, 255, 0] },   // Green
+        { threshold: 0.7, color: [255, 255, 0] }, // Yellow
+        { threshold: 0.9, color: [255, 0, 0] }    // Red
+      ];
+
+      for (let i = colors.length - 1; i >= 0; i--) {
+        if (pixelValue >= colors[i].threshold) {
+          return colors[i].color;
+        }
+      }
+      return [0, 0, 0]; // Default to black if no match
+    };
+
+    const pixelData = image.getPixelData();
+    const rgbaLut = new Uint8ClampedArray(pixelData.length * 4);
+    const maxDose = Math.max(...pixelData);
+
+    for (let i = 0; i < pixelData.length; i++) {
+      const value = pixelData[i] / maxDose;
+      const [r, g, b] = colorMap(value);
+      rgbaLut[i * 4] = r;
+      rgbaLut[i * 4 + 1] = g;
+      rgbaLut[i * 4 + 2] = b;
+      rgbaLut[i * 4 + 3] = 255; // Alpha
     }
+
+    image.color = true;
+    image.getPixelData = () => rgbaLut;
+    image.getCanvas = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext('2d');
+      const imageData = context.createImageData(image.width, image.height);
+      imageData.data.set(rgbaLut);
+      context.putImageData(imageData, 0, 0);
+      return canvas;
+    };
   };
 
   const handleFileUpload = async (event) => {
@@ -61,15 +109,7 @@ const RTDoseViewer = () => {
 
   return (
     <div>
-      <div>
-        <input type="file" onChange={handleFileUpload} />
-      </div>
-
-      <div
-        ref={elementRef}
-        style={{ width: '512px', height: '512px', background: 'black', margin: '10px' }}
-      />
-
+      <input type="file" onChange={handleFileUpload} />
       {imageIds.length > 1 && (
         <input
           type="range"
@@ -79,6 +119,10 @@ const RTDoseViewer = () => {
           onChange={handleSliderChange}
         />
       )}
+      <div
+        ref={elementRef}
+        style={{ width: '512px', height: '512px' }}
+      />
     </div>
   );
 };
